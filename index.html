@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Rotating ASCII Cube</title>
+  <style>
+	html, body {
+		margin: 0;
+		padding: 0;
+		height: 100%;         /* or 100vh */
+	}
+
+    body {
+      background: black;
+      color: green;
+      font-family: monospace;
+      white-space: pre;
+      text-align: center;
+      margin: 0;
+      padding: 0;
+	  display: flex;
+	  justify-content: center;
+	  align-items: center;
+    }
+    #canvas {
+      line-height: 120%;
+    }
+  </style>
+</head>
+<body>
+  <!-- The canvas element where the ASCII art is rendered -->
+  <pre id="canvas"></pre>
+  
+  <script>
+    // Dimensions similar to the terminal version.
+    const width = 160, height = 44;
+    const totalPixels = width * height;
+
+    // Global rotation angles
+    let A = 0.0, B = 0.0, C = 0.0;
+    // Distance of the cube from the "camera"
+    const distanceFromCam = 100;
+    // Projection constant and horizontal offset (if needed)
+    const K1 = 40;
+    const horizontalOffset = 0;
+    // Speed increments
+    const incrementSpeed = 0.01;
+
+    // Buffers for ASCII characters and depth (z-buffer)
+    let buffer = new Array(totalPixels);
+    let zBuffer = new Array(totalPixels);
+    
+    // Set background character
+    const backgroundASCIICode = ' ';
+
+    // Functions for calculating rotated and projected coordinates
+    function calculateX(i, j, k) {
+      return j * Math.sin(A) * Math.sin(B) * Math.cos(C) -
+             k * Math.cos(A) * Math.sin(B) * Math.cos(C) +
+             j * Math.cos(A) * Math.sin(C) +
+             k * Math.sin(A) * Math.sin(C) +
+             i * Math.cos(B) * Math.cos(C);
+    }
+
+    function calculateY(i, j, k) {
+      return j * Math.cos(A) * Math.cos(C) +
+             k * Math.sin(A) * Math.cos(C) -
+             j * Math.sin(A) * Math.sin(B) * Math.sin(C) +
+             k * Math.cos(A) * Math.sin(B) * Math.sin(C) -
+             i * Math.cos(B) * Math.sin(C);
+    }
+
+    function calculateZ(i, j, k) {
+      return k * Math.cos(A) * Math.cos(B) -
+             j * Math.sin(A) * Math.cos(B) +
+             i * Math.sin(B);
+    }
+    
+    // The workhorse function: given a point on one of the cube's surfaces, calculate its projection.
+    function calculateForSurface(cubeX, cubeY, cubeZ, ch) {
+      const x = calculateX(cubeX, cubeY, cubeZ);
+      const y = calculateY(cubeX, cubeY, cubeZ);
+      // Add distanceFromCam so the cube is in front of the camera.
+      let z = calculateZ(cubeX, cubeY, cubeZ) + distanceFromCam;
+      if (z === 0) z = 1e-6; // Prevent division by zero
+      const ooz = 1 / z;  // “One over z”
+
+      // Calculate screen coordinates (xp and yp)
+      const xp = Math.trunc(width / 2 + horizontalOffset + K1 * ooz * x * 2);
+      const yp = Math.trunc(height / 2 + K1 * ooz * y);
+      
+      // Calculate buffer index and check boundaries
+      const idx = xp + yp * width;
+      if (xp >= 0 && xp < width && yp >= 0 && yp < height) {
+        if (ooz > zBuffer[idx]) {
+          zBuffer[idx] = ooz;
+          buffer[idx] = ch;
+        }
+      }
+    }
+    
+    // Render one frame
+    function render() {
+      // Reset the character buffer and z-buffer for this frame.
+      buffer.fill(backgroundASCIICode);
+      zBuffer.fill(0);
+
+      // Increment the rotation angles to animate the cube.
+      A += incrementSpeed;
+      B += incrementSpeed;
+      C += 0.01;
+      
+      // Iterate over the cube's surfaces. This nested loop is equivalent
+      // to iterating (cubeX, cubeY) over a grid for each face.
+      for (let cubeX = -20; cubeX < 20; cubeX += 0.5) {
+        for (let cubeY = -20; cubeY < 20; cubeY += 0.5) {
+          // Each call renders a different face of the cube using a unique ASCII character
+          calculateForSurface(cubeX, cubeY, -20, '@');  // Front face
+          calculateForSurface(20, cubeY, cubeX, '$');    // Right face
+          calculateForSurface(-20, cubeY, -cubeX, '~');   // Left face
+          calculateForSurface(-cubeX, cubeY, 20, '#');    // Back face
+          calculateForSurface(cubeX, -20, -cubeY, ';');   // Bottom face
+          calculateForSurface(cubeX, 20, cubeY, '+');      // Top face
+        }
+      }
+      
+      // Build a string from the buffer (inserting a newline every "width" characters)
+      let output = "";
+      for (let y = 0; y < height; y++) {
+        let line = "";
+        for (let x = 0; x < width; x++) {
+          line += buffer[x + y * width];
+        }
+        output += line + "\n";
+      }
+      
+      // Update the pre element with the new frame
+      document.getElementById("canvas").innerText = output;
+      
+      // Request the next frame
+      requestAnimationFrame(render);
+    }
+    
+    // Start the render loop
+    render();
+  </script>
+</body>
+</html>
