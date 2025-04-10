@@ -2,14 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Interactive Rotating ASCII Cube</title>
+  <title>Arcball Rotating Cube with Ground Shadow</title>
   <style>
-	html, body {
-		margin: 0;
-		padding: 0;
-		height: 100%;         /* or 100vh */
-	}
-
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;         /* or 100vh */
+    }
     body {
       background: black;
       color: green;
@@ -18,232 +17,265 @@
       text-align: center;
       margin: 0;
       padding: 0;
-	  display: flex;
-	  justify-content: center;
-	  align-items: center;
+      display: flex;
+      justify-content: center;
+      align-items: center;
     }
     #canvas {
+	  background-color: black;
       line-height: 120%;
-	  user-select: none;
-	  -webkit-user-select: none;   /* Safari */
+      user-select: none;
+      -webkit-user-select: none;   /* Safari */
       -moz-user-select: none;      /* Firefox */
       -ms-user-select: none;       /* Internet Explorer/Edge */
     }
   </style>
 </head>
 <body>
-	<pre id="canvas"></pre>
-	
-	<script>
-	  // Canvas dimensions (matching the original terminal version)
-	  const width = 160, height = 44;
-	  const totalPixels = width * height;
-	  
-	  // Projection constants
-	  const distanceFromCam = 100;
-	  const K1 = 40;
-	  const horizontalOffset = 0;
-	  
-	  // Automatic rotation speed (when not dragging)
-	  const autoRotX = 0.01;
-	  const autoRotY = 0.01;
-	  const autoRotZ = 0.01;
-	  
-	  // Buffers for the ASCII frame and for depth (z-buffer)
-	  let buffer = new Array(totalPixels);
-	  let zBuffer = new Array(totalPixels);
-	  const backgroundASCIICode = ' ';
-	  
-	  // We use a 3x3 rotation matrix to represent the cube's orientation.
-	  // The matrix is stored as an array of 9 elements (row-major order):
-	  // [r00, r01, r02, r10, r11, r12, r20, r21, r22]
-	  let orientation = [1, 0, 0,
-						 0, 1, 0,
-						 0, 0, 1];
-	  
-	  // For arcball dragging
-	  let dragging = false;
-	  let initialOrientation = null; // Copy of orientation when drag starts
-	  let arcStartVec = null;        // Arcball vector at the start of dragging
-	  
-	  const canvasElement = document.getElementById("canvas");
-	  
-	  // Helper: Multiply two 3x3 matrices.
-	  function multiplyMatrix(a, b) {
-		let result = new Array(9);
-		for (let i = 0; i < 3; i++) {
-		  for (let j = 0; j < 3; j++) {
-			result[i*3+j] = a[i*3+0] * b[0*3+j] +
-							a[i*3+1] * b[1*3+j] +
-							a[i*3+2] * b[2*3+j];
-		  }
-		}
-		return result;
-	  }
-	  
-	  // Helper: Rotation matrix around X-axis
-	  function rotationMatrixX(angle) {
-		const c = Math.cos(angle), s = Math.sin(angle);
-		return [1, 0, 0,
-				0, c, -s,
-				0, s, c];
-	  }
-	  
-	  // Helper: Rotation matrix around Y-axis
-	  function rotationMatrixY(angle) {
-		const c = Math.cos(angle), s = Math.sin(angle);
-		return [c, 0, s,
-				0, 1, 0,
-				-s, 0, c];
-	  }
-	  
-	  // Helper: Rotation matrix around Z-axis
-	  function rotationMatrixZ(angle) {
-		const c = Math.cos(angle), s = Math.sin(angle);
-		return [c, -s, 0,
-				s, c, 0,
-				0, 0, 1];
-	  }
-	  
-	  // Helper: Create a rotation matrix from an axis (3-element vector) and an angle.
-	  function rotationMatrixFromAxisAngle(axis, angle) {
-		const norm = Math.hypot(axis[0], axis[1], axis[2]);
-		if (norm === 0) return [1,0,0, 0,1,0, 0,0,1];
-		const [x, y, z] = [axis[0] / norm, axis[1] / norm, axis[2] / norm];
-		const c = Math.cos(angle), s = Math.sin(angle), t = 1 - c;
-		return [
-		  t*x*x + c,     t*x*y - s*z,   t*x*z + s*y,
-		  t*x*y + s*z,   t*y*y + c,     t*y*z - s*x,
-		  t*x*z - s*y,   t*y*z + s*x,   t*z*z + c
-		];
-	  }
-	  
-	  // Helper: Transform a 3D point by the current orientation matrix.
-	  function transformPoint(x, y, z) {
-		return [
-		  orientation[0]*x + orientation[1]*y + orientation[2]*z,
-		  orientation[3]*x + orientation[4]*y + orientation[5]*z,
-		  orientation[6]*x + orientation[7]*y + orientation[8]*z
-		];
-	  }
-	  
-	  // Arcball mapping: maps the mouse position to a 3D point on a unit sphere.
-	  function getArcballVector(clientX, clientY) {
-		const rect = canvasElement.getBoundingClientRect();
-		// Map mouse coordinates so that the center is (0,0) and the range is [-1,1]
-		let x = -1 * (clientX - rect.left - rect.width / 2) / (rect.width / 2);
-		let y = (rect.height / 2 - (clientY - rect.top)) / (rect.height / 2); // invert y for typical canvas coordinates
-		let z2 = 1 - x*x - y*y;
-		let z = z2 > 0 ? Math.sqrt(z2) : 0;
-		return [x, y, z];
-	  }
-	  
-	  // Vector cross product (3-element vectors)
-	  function cross(v1, v2) {
-		return [
-		  v1[1]*v2[2] - v1[2]*v2[1],
-		  v1[2]*v2[0] - v1[0]*v2[2],
-		  v1[0]*v2[1] - v1[1]*v2[0]
-		];
-	  }
-	  
-	  // Vector dot product
-	  function dot(v1, v2) {
-		return v1[0]*v2[0] + v1[1]*v2[1] + v1[2]*v2[2];
-	  }
-	  
-	  // --- Event Listeners for Dragging (Arcball rotation) ---
-	  canvasElement.addEventListener("mousedown", (e) => {
-		dragging = true;
-		canvasElement.style.cursor = "grabbing";
-		arcStartVec = getArcballVector(e.clientX, e.clientY);
-		initialOrientation = orientation.slice();  // make a copy
-	  });
-	  
-	  canvasElement.addEventListener("mousemove", (e) => {
-		if (dragging) {
-		  const arcCurrentVec = getArcballVector(e.clientX, e.clientY);
-		  // Compute the rotation axis and angle from the start vector to current vector.
-		  const axis = cross(arcStartVec, arcCurrentVec);
-		  let angle = Math.acos(Math.min(1.0, dot(arcStartVec, arcCurrentVec)));
-		  // If there's little movement, avoid updating.
-		  if (!isNaN(angle) && Math.abs(angle) > 1e-6) {
-			// Compute the incremental rotation matrix.
-			const rotInc = rotationMatrixFromAxisAngle(axis, angle);
-			// Update orientation: new orientation = incrementalRotation * initialOrientation
-			orientation = multiplyMatrix(rotInc, initialOrientation);
-		  }
-		}
-	  });
-	  
-	  // End dragging on mouseup or when leaving the canvas.
-	  canvasElement.addEventListener("mouseup", () => {
-		dragging = false;
-		canvasElement.style.cursor = "grab";
-	  });
-	  canvasElement.addEventListener("mouseleave", () => {
-		dragging = false;
-		canvasElement.style.cursor = "grab";
-	  });
-	  
-	  // --- Projection function: transform a 3D point and update the ASCII buffer ---
-	  function calculateForSurface(cubeX, cubeY, cubeZ, ch) {
-		// Transform the point using the current orientation matrix.
-		const point = transformPoint(cubeX, cubeY, cubeZ);
-		let x = point[0], y = point[1], z = point[2] + distanceFromCam;
-		if (z === 0) z = 1e-6;
-		const ooz = 1 / z;
-		const xp = Math.trunc(width/2 + horizontalOffset + K1 * ooz * x * 2);
-		const yp = Math.trunc(height/2 + K1 * ooz * y);
-		const idx = xp + yp * width;
-		if (xp >= 0 && xp < width && yp >= 0 && yp < height) {
-		  if (ooz > zBuffer[idx]) {
-			zBuffer[idx] = ooz;
-			buffer[idx] = ch;
-		  }
-		}
-	  }
-	  
-	  // --- Render Loop ---
-	  function render() {
-		buffer.fill(backgroundASCIICode);
-		zBuffer.fill(0);
-		
-		// When not dragging, apply a small automatic rotation.
-		if (!dragging) {
-		  const rotX = rotationMatrixX(autoRotX);
-		  const rotY = rotationMatrixY(autoRotY);
-		  const rotZ = rotationMatrixZ(autoRotZ);
-		  // Compose the incremental rotations (order matters)
-		  orientation = multiplyMatrix(rotZ, multiplyMatrix(rotY, multiplyMatrix(rotX, orientation)));
-		}
-		
-		// Iterate over points to render the six cube faces.
-		for (let cubeX = -20; cubeX < 20; cubeX += 0.5) {
-		  for (let cubeY = -20; cubeY < 20; cubeY += 0.5) {
-			calculateForSurface(cubeX, cubeY, -20, '@');  // Front face
-			calculateForSurface(20, cubeY, cubeX, '$');    // Right face
-			calculateForSurface(-20, cubeY, -cubeX, '~');   // Left face
-			calculateForSurface(-cubeX, cubeY, 20, '#');    // Back face
-			calculateForSurface(cubeX, -20, -cubeY, ';');   // Bottom face
-			calculateForSurface(cubeX, 20, cubeY, '+');      // Top face
-		  }
-		}
-		
-		// Build the output string line by line.
-		let output = "";
-		for (let y = 0; y < height; y++) {
-		  let line = "";
-		  for (let x = 0; x < width; x++) {
-			line += buffer[x + y * width];
-		  }
-		  output += line + "\n";
-		}
-		canvasElement.innerText = output;
-		requestAnimationFrame(render);
-	  }
-	  
-	  render();
-	</script>
-  </body>
-  </html>
+  <pre id="canvas"></pre>
+  <script>
+    // Canvas dimensions (characters)
+    const width = 160, height = 60;
+    const totalPixels = width * height;
+    const horizontalOffset = 0;
+	const verticalOffset = -5;
+    const K1 = 40;
+    const distanceFromCam = 100;
+    const backgroundASCIICode = " ";
+
+    // Ground plane Y coordinate (world space) for the shadow projection.
+    const groundLevel = 50;
+
+    // Light vector coming from above (and a bit to the side).
+    // Start with L = [0.5, -1, 0.5] then normalize.
+    const lightUnnormalized = [1.5, -2, 0.5];
+    const lightNorm = Math.hypot(lightUnnormalized[0], lightUnnormalized[1], lightUnnormalized[2]);
+    const light = [ lightUnnormalized[0] / lightNorm,
+                    lightUnnormalized[1] / lightNorm,
+                    lightUnnormalized[2] / lightNorm ];
+
+    // Buffers for the ASCII frame and z-buffer.
+    let buffer = new Array(totalPixels);
+    let zBuffer = new Array(totalPixels);
+
+    // --- Orientation & Arcball Setup ---
+    // Using a 3x3 rotation matrix (in row-major order) to represent the cube's orientation.
+    // Start with the identity matrix.
+    let orientation = [
+      1, 0, 0,
+      0, 1, 0,
+      0, 0, 1
+    ];
+
+    // Automatic rotation increments (when not dragging).
+    const autoRotX = 0.01, autoRotY = 0.01, autoRotZ = 0.01;
+
+    // Variables for arcball dragging.
+    let dragging = false;
+    let initialOrientation = null; // Copy of orientation at the start of drag.
+    let arcStartVec = null;        // Arcball vector at drag start.
+
+    const canvasElement = document.getElementById("canvas");
+
+    // --- Matrix and Vector Helpers ---
+    function multiplyMatrix(a, b) {
+      let result = new Array(9);
+      for (let i = 0; i < 3; i++) {
+        for (let j = 0; j < 3; j++) {
+          result[i*3+j] = a[i*3+0]*b[0*3+j] +
+                          a[i*3+1]*b[1*3+j] +
+                          a[i*3+2]*b[2*3+j];
+        }
+      }
+      return result;
+    }
+    function rotationMatrixX(angle) {
+      const c = Math.cos(angle), s = Math.sin(angle);
+      return [
+        1, 0, 0,
+        0, c, -s,
+        0, s, c
+      ];
+    }
+    function rotationMatrixY(angle) {
+      const c = Math.cos(angle), s = Math.sin(angle);
+      return [
+        c, 0, s,
+        0, 1, 0,
+        -s, 0, c
+      ];
+    }
+    function rotationMatrixZ(angle) {
+      const c = Math.cos(angle), s = Math.sin(angle);
+      return [
+        c, -s, 0,
+        s, c, 0,
+        0, 0, 1
+      ];
+    }
+    // Rotation matrix from an axis and an angle.
+    function rotationMatrixFromAxisAngle(axis, angle) {
+      const norm = Math.hypot(axis[0], axis[1], axis[2]);
+      if (norm === 0) return [1,0,0, 0,1,0, 0,0,1];
+      const [x, y, z] = [axis[0]/norm, axis[1]/norm, axis[2]/norm];
+      const c = Math.cos(angle), s = Math.sin(angle), t = 1 - c;
+      return [
+        t*x*x + c,   t*x*y - s*z, t*x*z + s*y,
+        t*x*y + s*z, t*y*y + c,   t*y*z - s*x,
+        t*x*z - s*y, t*y*z + s*x, t*z*z + c
+      ];
+    }
+    // Transform a 3D point [x,y,z] by the current orientation matrix.
+    function transformPoint(x, y, z) {
+      return [
+        orientation[0]*x + orientation[1]*y + orientation[2]*z,
+        orientation[3]*x + orientation[4]*y + orientation[5]*z,
+        orientation[6]*x + orientation[7]*y + orientation[8]*z
+      ];
+    }
+    // Map mouse position to a point on the unit sphere (arcball).
+    function getArcballVector(clientX, clientY) {
+      const rect = canvasElement.getBoundingClientRect();
+      // Shift so center is (0,0), range [-1,1].
+      let x = (clientX - rect.left - rect.width/2) / (rect.width/2);
+      let y = (rect.height/2 - (clientY - rect.top)) / (rect.height/2);
+      let z2 = 1 - x*x - y*y;
+      let z = z2 > 0 ? Math.sqrt(z2) : 0;
+      return [x, y, z];
+    }
+    function cross(v1, v2) {
+      return [
+        v1[1]*v2[2] - v1[2]*v2[1],
+        v1[2]*v2[0] - v1[0]*v2[2],
+        v1[0]*v2[1] - v1[1]*v2[0]
+      ];
+    }
+    function dot(v1, v2) {
+      return v1[0]*v2[0] + v1[1]*v2[1] + v1[2]*v2[2];
+    }
+
+    // --- Mouse Events for Arcball Rotation ---
+    canvasElement.addEventListener("mousedown", (e) => {
+      dragging = true;
+      canvasElement.style.cursor = "grabbing";
+      arcStartVec = getArcballVector(e.clientX, e.clientY);
+      initialOrientation = orientation.slice(); // Copy current orientation.
+    });
+    canvasElement.addEventListener("mousemove", (e) => {
+      if (dragging) {
+        const arcCurrentVec = getArcballVector(e.clientX, e.clientY);
+        const axis = cross(arcStartVec, arcCurrentVec);
+        let angle = Math.acos(Math.min(1.0, dot(arcStartVec, arcCurrentVec)));
+        if (!isNaN(angle) && Math.abs(angle) > 1e-6) {
+          const rotInc = rotationMatrixFromAxisAngle(axis, angle);
+          orientation = multiplyMatrix(rotInc, initialOrientation);
+        }
+      }
+    });
+    canvasElement.addEventListener("mouseup", () => {
+      dragging = false;
+      canvasElement.style.cursor = "grab";
+    });
+    canvasElement.addEventListener("mouseleave", () => {
+      dragging = false;
+      canvasElement.style.cursor = "grab";
+    });
+
+    // --- Projection Functions ---
+    // Render a point from the cube by transforming and projecting it.
+    function calculateForSurface(cubeX, cubeY, cubeZ, ch) {
+      const point = transformPoint(cubeX, cubeY, cubeZ);
+      let x = point[0], y = point[1], z = point[2] + distanceFromCam;
+      if (z === 0) z = 1e-6;
+      const ooz = 1 / z;
+      const xp = Math.trunc(width/2 + horizontalOffset + K1 * ooz * x * 2);
+      const yp = Math.trunc(height/2 + K1 * ooz * y + verticalOffset);
+      const idx = xp + yp * width;
+      if (xp >= 0 && xp < width && yp >= 0 && yp < height) {
+        if (ooz > zBuffer[idx]) {
+          zBuffer[idx] = ooz;
+          buffer[idx] = ch;
+        }
+      }
+    }
+
+    // Compute and render the shadow of a cube point onto the ground plane.
+    function calculateShadow(cubeX, cubeY, cubeZ) {
+      // Get the cube's 3D point.
+      const P = transformPoint(cubeX, cubeY, cubeZ);
+      // Compute t so that the y-coordinate becomes groundLevel.
+      const t = (groundLevel - P[1]) / light[1];
+      // Compute the shadow point S = P + t * light.
+      const S = [ P[0] + t * light[0], P[1] + t * light[1], P[2] + t * light[2] ];
+      // Perspective projection of S.
+      let zProj = S[2] + distanceFromCam;
+      if (zProj === 0) zProj = 1e-6;
+      const ooz = 1 / zProj;
+      const xp = Math.trunc(width/2 + horizontalOffset + K1 * ooz * S[0] * 2);
+      const yp = Math.trunc(height/2 + K1 * ooz * S[1]);
+      const idx = xp + yp * width;
+      if (xp >= 0 && xp < width && yp >= 0 && yp < height) {
+        // Only place the shadow if no cube character is already drawn.
+        if (buffer[idx] === backgroundASCIICode) {
+          buffer[idx] = ".";
+        }
+      }
+    }
+
+    // --- Render Loop ---
+    function render() {
+      // Clear the buffers.
+      buffer.fill(backgroundASCIICode);
+      zBuffer.fill(0);
+
+      // Apply a small automatic rotation when not dragging.
+      if (!dragging) {
+        const rotX = rotationMatrixX(autoRotX);
+        const rotY = rotationMatrixY(autoRotY);
+        const rotZ = rotationMatrixZ(autoRotZ);
+        orientation = multiplyMatrix(rotZ, multiplyMatrix(rotY, multiplyMatrix(rotX, orientation)));
+      }
+
+	  const cubeYOffset = -100;
+
+      // Render the cube by sampling its six faces.
+      for (let cubeX = -20; cubeX < 20; cubeX += 0.5) {
+        for (let cubeY = -20; cubeY < 20; cubeY += 0.5) {
+          calculateForSurface(cubeX,    cubeY , -20 , '@'); // Front face
+          calculateForSurface(20,       cubeY ,  cubeX , '$'); // Right face
+          calculateForSurface(-20,      cubeY , -cubeX , '~'); // Left face
+          calculateForSurface(-cubeX,   cubeY , 20 , '#'); // Back face
+          calculateForSurface(cubeX,   -20 , -cubeY , ';'); // Bottom face
+          calculateForSurface(cubeX,    20 ,  cubeY , '+'); // Top face
+        }
+      }
+
+      // Render the shadow on the ground.
+      // (We use the same sampling as for the cube, so the shadow becomes the union of all projected points.)
+      for (let cubeX = -20; cubeX < 20; cubeX += 0.5) {
+        for (let cubeY = -20; cubeY < 20; cubeY += 0.5) {
+          calculateShadow(cubeX,    cubeY, -20); // Shadow of front face
+          calculateShadow(20,       cubeY,  cubeX); // Shadow of right face
+          calculateShadow(-20,      cubeY, -cubeX); // Shadow of left face
+          calculateShadow(-cubeX,   cubeY, 20); // Shadow of back face
+          calculateShadow(cubeX,   -20, -cubeY); // Shadow of bottom face
+          calculateShadow(cubeX,    20,  cubeY); // Shadow of top face
+        }
+      }
+
+      // Build the output string.
+      let output = "";
+      for (let y = 0; y < height; y++) {
+        let line = "";
+        for (let x = 0; x < width; x++) {
+          line += buffer[x + y*width];
+        }
+        output += line + "\n";
+      }
+      canvasElement.innerText = output;
+      requestAnimationFrame(render);
+    }
+    render();
+  </script>
+</body>
+</html>
